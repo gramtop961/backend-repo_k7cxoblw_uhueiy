@@ -4,6 +4,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, EmailStr
 import smtplib
 from email.message import EmailMessage
+from bson import ObjectId
+from typing import List, Optional
+
+from database import db, create_document, get_documents
+from schemas import Message
 
 app = FastAPI()
 
@@ -49,6 +54,13 @@ Message:
 {req.message}
 """.strip()
 
+    # Persist message in database for admin dashboard
+    try:
+        create_document("message", Message(name=req.name, email=req.email, message=req.message))
+    except Exception as e:
+        # Non-fatal: continue sending email even if DB unavailable
+        print("[Contact] DB save failed:", str(e))
+
     # Build email
     msg = EmailMessage()
     msg["Subject"] = subject
@@ -75,6 +87,23 @@ Message:
     print("Subject:", subject)
     print("Body:\n", body)
     return {"status": "queued", "note": "Email not sent (missing credentials). Configure GMAIL_USER and GMAIL_APP_PASSWORD to enable sending."}
+
+
+@app.get("/api/messages")
+def list_messages(limit: Optional[int] = 100):
+    try:
+        docs = get_documents("message", {}, limit)
+    except Exception as e:
+        # If DB is not configured, return empty list gracefully
+        print("[Messages] Fetch failed:", str(e))
+        docs = []
+    # Convert ObjectId to string
+    for d in docs:
+        if isinstance(d.get("_id"), ObjectId):
+            d["_id"] = str(d["_id"])
+    # Sort by created_at desc if available
+    docs.sort(key=lambda x: x.get("created_at", 0), reverse=True)
+    return {"items": docs}
 
 
 @app.get("/test")
